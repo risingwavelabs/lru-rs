@@ -2091,4 +2091,28 @@ mod tests {
         let mut cache = LruCache::new(0);
         cache.put("reizeiin", "tohka");
     }
+
+    #[test]
+    fn test_heap_memory_stats() {
+        let mut cache = LruCache::new(4);
+
+        cache.put(1, vec![1u64]);
+        cache.put(2, vec![2, 2]);
+
+        assert_eq!(cache.estimated_heap_size(), 24);
+        cache.update_epoch(1);
+
+        cache.put(3, vec![3, 3, 3]);
+        cache.put(4, vec![4, 4, 4, 4]);
+
+        assert_eq!(cache.estimated_heap_size(), 80);
+        cache.evict_by_epoch(1);
+
+        assert_eq!(cache.estimated_heap_size(), 56);
+
+        cache.evict_by_epoch(2);
+        assert_eq!(cache.estimated_heap_size(), 0);
+
+        assert_eq!(cache.len(), 0);
+    }
 }
