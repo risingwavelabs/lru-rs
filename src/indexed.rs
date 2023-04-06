@@ -236,12 +236,41 @@ impl<K: Hash + Eq, V, S: BuildHasher, A: Clone + Allocator> IndexedLruCache<K, V
                 if dropped {
                     (None, Some(index))
                 } else {
-                    let v = unsafe { &mut (*(*node).val.as_mut_ptr()) as &mut V };
-                    (Some(v), Some(index))
+                    (
+                        Some(unsafe { &mut (*(*node).val.as_mut_ptr()) as &mut V }),
+                        Some(index),
+                    )
                 }
             }
         }
     }
+
+    pub fn get_mut<'a, Q>(&'a mut self, k: &Q, new_index: u32) -> (Option<&'a mut V>, Option<u32>)
+    where
+        KeyRef<K>: Borrow<Q>,
+        Q: Hash + Eq + ?Sized,
+    {
+        if let Some(node) = self.map.get_mut(k) {
+            let index = (*node).index;
+            let dropped = (*node).dropped;
+            let node_ptr: *mut IndexedLruEntry<K, V> = &mut **node;
+
+            if dropped {
+                (None, Some(index))
+            } else {
+                (*node).index = new_index;
+                self.detach(node_ptr);
+                self.attach(node_ptr);
+                (
+                    Some(unsafe { &mut (*(*node_ptr).val.as_mut_ptr()) as &mut V }),
+                    Some(index),
+                )
+            }
+        } else {
+            (None, None)
+        }
+    }
+
     pub fn cap(&self) -> usize {
         self.cap
     }
