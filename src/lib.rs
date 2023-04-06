@@ -80,6 +80,9 @@ extern crate alloc;
 
 type Epoch = u64;
 
+pub mod indexed;
+pub use indexed::*;
+
 // Struct used to hold a reference to a key
 #[doc(hidden)]
 #[derive(Eq)]
