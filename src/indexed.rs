@@ -71,19 +71,21 @@ pub struct IndexedLruCache<K, V, S = DefaultHasher, A: Clone + Allocator = Globa
 }
 
 impl<K: Hash + Eq, V, S: BuildHasher, A: Clone + Allocator> IndexedLruCache<K, V, S, A> {
-    pub fn with_hasher_in(cap: usize, hash_builder: S, alloc: A) -> Self {
+    pub fn with_hasher_in(cap: usize, hash_builder: S, alloc: A, ghost_cap: usize) -> Self {
         IndexedLruCache::construct_in(
             cap,
             HashMap::with_capacity_and_hasher_in(cap, hash_builder, alloc.clone()),
             alloc,
+            ghost_cap,
         )
     }
 
-    pub fn unbounded_with_hasher_in(hash_builder: S, alloc: A) -> Self {
+    pub fn unbounded_with_hasher_in(hash_builder: S, alloc: A, ghost_cap: usize) -> Self {
         IndexedLruCache::construct_in(
             usize::MAX,
             HashMap::with_hasher_in(hash_builder, alloc.clone()),
             alloc,
+            ghost_cap,
         )
     }
 
@@ -92,6 +94,7 @@ impl<K: Hash + Eq, V, S: BuildHasher, A: Clone + Allocator> IndexedLruCache<K, V
         cap: usize,
         map: HashMap<KeyRef<K>, Box<IndexedLruEntry<K, V>, A>, S, A>,
         alloc: A,
+        ghost_cap: usize,
     ) -> IndexedLruCache<K, V, S, A> {
         // NB: The compiler warns that cache does not need to be marked as mutable if we
         // declare it as such since we only mutate it inside the unsafe block.
@@ -101,7 +104,7 @@ impl<K: Hash + Eq, V, S: BuildHasher, A: Clone + Allocator> IndexedLruCache<K, V
         let cache = IndexedLruCache {
             map,
             cap,
-            ghost_cap: 2,
+            ghost_cap,
             ghost_len: 0,
             head,
             ghost_head,
@@ -128,8 +131,8 @@ impl<K: Hash + Eq, V> IndexedLruCache<K, V> {
     /// use lru::IndexedLruCache;
     /// let mut cache: IndexedLruCache<isize, &str> = IndexedLruCache::new(10);
     /// ```
-    pub fn new(cap: usize) -> IndexedLruCache<K, V> {
-        IndexedLruCache::construct_in(cap, HashMap::with_capacity(cap), Global)
+    pub fn new(cap: usize, ghost_cap: usize) -> IndexedLruCache<K, V> {
+        IndexedLruCache::construct_in(cap, HashMap::with_capacity(cap), Global, ghost_cap)
     }
 
     /// Creates a new LRU Cache that never automatically evicts items.
@@ -140,8 +143,8 @@ impl<K: Hash + Eq, V> IndexedLruCache<K, V> {
     /// use lru::IndexedLruCache;
     /// let mut cache: IndexedLruCache<isize, &str> = IndexedLruCache::unbounded();
     /// ```
-    pub fn unbounded() -> IndexedLruCache<K, V> {
-        IndexedLruCache::construct_in(usize::MAX, HashMap::default(), Global)
+    pub fn unbounded(ghost_cap: usize) -> IndexedLruCache<K, V> {
+        IndexedLruCache::construct_in(usize::MAX, HashMap::default(), Global, ghost_cap)
     }
 }
 
@@ -347,7 +350,9 @@ impl<K: Hash + Eq, V, S: BuildHasher, A: Clone + Allocator> IndexedLruCache<K, V
         let node = self.remove_last()?;
         // N.B.: Can't destructure directly because of https://github.com/rust-lang/rust/issues/28536
         let node = *node;
-        let IndexedLruEntry { key, val, dropped, .. } = node;
+        let IndexedLruEntry {
+            key, val, dropped, ..
+        } = node;
         unsafe {
             if !dropped {
                 let _val = val.assume_init();
@@ -435,7 +440,7 @@ mod tests {
     use std::sync::atomic::{AtomicUsize, Ordering};
     #[test]
     fn test_evict_by_epoch() {
-        let mut cache = IndexedLruCache::new(10);
+        let mut cache = IndexedLruCache::new(10, 2);
 
         cache.put(1, "a", 1);
         cache.put(2, "b", 2);
@@ -492,7 +497,7 @@ mod tests {
 
         for _ in 0..n {
             DROP_COUNT.store(0, Ordering::SeqCst);
-            let mut cache = IndexedLruCache::unbounded();
+            let mut cache = IndexedLruCache::unbounded(2);
             for i in 1..n + 1 {
                 cache.update_epoch(i as u64);
                 cache.put(i, DropCounter {}, 10);
@@ -517,7 +522,7 @@ mod tests {
 
         let n = 100;
         for _ in 0..n {
-            let mut cache = IndexedLruCache::unbounded();
+            let mut cache = IndexedLruCache::unbounded(2);
             for i in 0..n {
                 cache.put(i, DropCounter {}, 10);
             }
@@ -525,5 +530,4 @@ mod tests {
         }
         assert_eq!(DROP_COUNT.load(Ordering::SeqCst), n * n);
     }
-
 }
