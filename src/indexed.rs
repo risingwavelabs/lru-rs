@@ -343,6 +343,39 @@ impl<K: Hash + Eq, V, S: BuildHasher, A: Clone + Allocator> IndexedLruCache<K, V
         self.map.shrink_to_fit();
     }
 
+    pub fn pop_lru(&mut self) -> Option<K> {
+        let node = self.remove_last()?;
+        // N.B.: Can't destructure directly because of https://github.com/rust-lang/rust/issues/28536
+        let node = *node;
+        let IndexedLruEntry { key, val, dropped, .. } = node;
+        unsafe {
+            if !dropped {
+                let _val = val.assume_init();
+            }
+            Some(key.assume_init())
+        }
+    }
+
+    pub fn clear(&mut self) {
+        while self.pop_lru().is_some() {}
+    }
+
+    fn remove_last(&mut self) -> Option<Box<IndexedLruEntry<K, V>, A>> {
+        let prev;
+        unsafe { prev = (*self.tail).prev }
+        if prev != self.head {
+            let old_key = KeyRef {
+                k: unsafe { &(*(*(*self.tail).prev).key.as_ptr()) },
+            };
+            let mut old_node = self.map.remove(&old_key).unwrap();
+            let node_ptr: *mut IndexedLruEntry<K, V> = &mut *old_node;
+            self.detach(node_ptr);
+            Some(old_node)
+        } else {
+            None
+        }
+    }
+
     fn detach(&mut self, node: *mut IndexedLruEntry<K, V>) {
         unsafe {
             (*(*node).prev).next = (*node).next;
@@ -469,4 +502,28 @@ mod tests {
             assert_eq!(cache.len(), 52);
         }
     }
+
+    #[test]
+    fn test_no_memory_leaks_with_clear() {
+        static DROP_COUNT: AtomicUsize = AtomicUsize::new(0);
+
+        struct DropCounter;
+
+        impl Drop for DropCounter {
+            fn drop(&mut self) {
+                DROP_COUNT.fetch_add(1, Ordering::SeqCst);
+            }
+        }
+
+        let n = 100;
+        for _ in 0..n {
+            let mut cache = IndexedLruCache::unbounded();
+            for i in 0..n {
+                cache.put(i, DropCounter {}, 10);
+            }
+            cache.clear();
+        }
+        assert_eq!(DROP_COUNT.load(Ordering::SeqCst), n * n);
+    }
+
 }
