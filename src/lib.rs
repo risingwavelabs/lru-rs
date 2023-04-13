@@ -82,6 +82,7 @@ type Epoch = u64;
 
 pub mod indexed;
 pub use indexed::*;
+pub mod test;
 
 // Struct used to hold a reference to a key
 #[doc(hidden)]
