@@ -331,22 +331,23 @@ impl<K: Hash + Eq, V, S: BuildHasher, A: Clone + Allocator> IndexedLruCache<K, V
         match self.map.get_mut(k) {
             None => None,
             Some(node) => {
-                let old_index = (*node).index;
+                // let old_index = (*node).index;
                 let is_ghost = (*node).dropped;
                 if is_ghost {
+                    // report when update
                     // remove from ghost
-                    let mut node = self.map.remove(&k).unwrap();
-                    unsafe {
-                        ptr::drop_in_place(node.key.as_mut_ptr());
-                    }
-                    let node_ptr: *mut IndexedLruEntry<K, V> = &mut *node;
-                    if node_ptr == self.ghost_head {
-                        self.ghost_head = unsafe { (*self.ghost_head).next };
-                    }
-                    self.detach(node_ptr);
-                    self.update_ghost_counters(&old_index);
-                    // destructure
-                    let _node = *node;
+                    // let mut node = self.map.remove(&k).unwrap();
+                    // unsafe {
+                    //     ptr::drop_in_place(node.key.as_mut_ptr());
+                    // }
+                    // let node_ptr: *mut IndexedLruEntry<K, V> = &mut *node;
+                    // if node_ptr == self.ghost_head {
+                    //     self.ghost_head = unsafe { (*self.ghost_head).next };
+                    // }
+                    // self.detach(node_ptr);
+                    // self.update_ghost_counters(&old_index);
+                    // // destructure
+                    // let _node = *node;
                     None
                 } else {
                     Some(unsafe { &mut (*(*node).val.as_mut_ptr()) as &mut V })
