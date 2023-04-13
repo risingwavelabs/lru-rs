@@ -54,7 +54,7 @@ mod indexed_tests {
         assert_eq!(val.unwrap().string, String::from("d"));
 
         assert_eq!(cache.len(), 2);
-        assert_eq!(cache.ghost_len(), 0);
+        assert_eq!(cache.ghost_len(), 2);
 
         assert_eq!(DROP_COUNT.load(Ordering::SeqCst), 2);
 
@@ -75,7 +75,7 @@ mod indexed_tests {
 
         assert_eq!(DROP_COUNT.load(Ordering::SeqCst), 4);
         assert_eq!(cache.len(), 0);
-        assert_eq!(cache.ghost_len(), 1);
+        assert_eq!(cache.ghost_len(), 2);
         println!("WKXLOG: cache: 4:{:?}", cache);
         cache.clear();
         assert_eq!(cache.ghost_len(), 0);
@@ -227,6 +227,7 @@ mod indexed_tests {
 
         println!("WKXLOG: cache: 3:{:?}", cache);
 
+        assert_eq!(cache.ghost_len(), 2);
         cache.clear();
         assert_eq!(cache.ghost_len(), 0);
         assert_eq!(cache.len(), 0);
