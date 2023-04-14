@@ -72,16 +72,20 @@ pub struct IndexedLruCache<K, V, S = DefaultHasher, A: Clone + Allocator = Globa
 
     /// for index
     pub(crate) global_index: u32,
+    pub(crate) earlist_index: u32,
     current_index_count: u32,
     update_interval: u32,
     pub(crate) counters: HashMap<u32, u32>,
 
     /// for index for ghost
     pub(crate) ghost_global_index: u32,
+    pub(crate) ghost_earlist_index: u32,
     ghost_current_index_count: u32,
     ghost_update_interval: u32,
     pub(crate) ghost_counters: HashMap<u32, u32>,
 
+    /// control
+    accurate_tail: bool,
     alloc: A,
 }
 
@@ -141,13 +145,16 @@ impl<K: Hash + Eq, V, S: BuildHasher, A: Clone + Allocator> IndexedLruCache<K, V
             cur_epoch: 0,
             alloc,
             global_index: 0,
+            earlist_index: 0,
             current_index_count: 0,
             update_interval,
             counters: HashMap::new(),
             ghost_global_index: 0,
+            ghost_earlist_index: 0,
             ghost_current_index_count: 0,
             ghost_update_interval: ((min(ghost_cap, usize::MAX - 10) + 10) / 10) as u32,
             ghost_counters: HashMap::new(),
+            accurate_tail: false,
         };
 
         unsafe {
@@ -160,14 +167,6 @@ impl<K: Hash + Eq, V, S: BuildHasher, A: Clone + Allocator> IndexedLruCache<K, V
 }
 
 impl<K: Hash + Eq, V> IndexedLruCache<K, V> {
-    /// Creates a new LRU Cache that holds at most `cap` items.
-    ///
-    /// # Example
-    ///
-    /// ```
-    /// use lru::IndexedLruCache;
-    /// let mut cache: IndexedLruCache<isize, &str> = IndexedLruCache::new(10);
-    /// ```
     pub fn new(cap: usize, ghost_cap: usize, update_interval: u32) -> IndexedLruCache<K, V> {
         IndexedLruCache::construct_in(
             cap,
@@ -178,14 +177,6 @@ impl<K: Hash + Eq, V> IndexedLruCache<K, V> {
         )
     }
 
-    /// Creates a new LRU Cache that never automatically evicts items.
-    ///
-    /// # Example
-    ///
-    /// ```
-    /// use lru::IndexedLruCache;
-    /// let mut cache: IndexedLruCache<isize, &str> = IndexedLruCache::unbounded();
-    /// ```
     pub fn unbounded(ghost_cap: usize, update_interval: u32) -> IndexedLruCache<K, V> {
         IndexedLruCache::construct_in(
             usize::MAX,
@@ -263,16 +254,37 @@ impl<K: Hash + Eq, V, S: BuildHasher, A: Clone + Allocator> IndexedLruCache<K, V
 }
 
 impl<K: Hash + Eq, V, S: BuildHasher, A: Clone + Allocator> IndexedLruCache<K, V, S, A> {
-    pub fn put(&mut self, k: K, mut v: V) {
+    pub fn put(&mut self, k: K, v: V) {
+        let _dis = self.put_sample(k, v, false, false);
+    }
+
+    pub fn put_sample(
+        &mut self,
+        k: K,
+        mut v: V,
+        is_update: bool,
+        return_distance: bool,
+    ) -> Option<(u32, bool)> {
         let node_ref = self.map.get_mut(&KeyRef { k: &k });
 
         match node_ref {
             Some(node_ref) => {
-                let old_index = node_ref.index;
+                let mut distance = 0;
+                let mut old_index = node_ref.index;
                 let is_ghost = node_ref.dropped;
                 let node_ptr: *mut IndexedLruEntry<K, V> = &mut **node_ref;
                 unsafe {
                     if is_ghost {
+                        if is_update && (return_distance || self.accurate_tail) {
+                            if old_index < self.ghost_earlist_index {
+                                old_index = self.ghost_earlist_index;
+                            }
+                            distance += self.len() as u32;
+                            distance += self.ghost_current_index_count;
+                            for i in old_index..self.ghost_global_index {
+                                distance += self.ghost_counters.get(&i).unwrap();
+                            }
+                        }
                         // move to real
                         (*node_ptr).index = self.get_index();
                         (*node_ptr).dropped = false;
@@ -292,6 +304,15 @@ impl<K: Hash + Eq, V, S: BuildHasher, A: Clone + Allocator> IndexedLruCache<K, V
                             self.shift_real_tail_to_ghost();
                         }
                     } else {
+                        if is_update && return_distance {
+                            if old_index < self.earlist_index {
+                                old_index = self.earlist_index;
+                            }
+                            distance += self.current_index_count;
+                            for i in old_index..self.global_index {
+                                distance += self.counters.get(&i).unwrap();
+                            }
+                        }
                         self.update_counters(&old_index);
                         if old_index != self.global_index {
                             (*node_ptr).index = self.get_index();
@@ -301,11 +322,12 @@ impl<K: Hash + Eq, V, S: BuildHasher, A: Clone + Allocator> IndexedLruCache<K, V
                         self.attach(node_ptr);
                     }
                 }
+                Some((distance, is_ghost))
             }
             None => {
                 // if the capacity is zero, do nothing
                 if self.cap() == 0 {
-                    return;
+                    return None;
                 }
                 let index = self.get_index();
                 let mut node = self.replace_or_create_node(k, v, index);
@@ -315,6 +337,7 @@ impl<K: Hash + Eq, V, S: BuildHasher, A: Clone + Allocator> IndexedLruCache<K, V
 
                 let keyref = unsafe { (*node_ptr).key.as_ptr() };
                 self.map.insert(KeyRef { k: keyref }, node);
+                None
             }
         }
     }
@@ -366,12 +389,26 @@ impl<K: Hash + Eq, V, S: BuildHasher, A: Clone + Allocator> IndexedLruCache<K, V
         KeyRef<K>: Borrow<Q>,
         Q: Hash + Eq + ?Sized,
     {
+        let (res, _) = self.get_mut_sample(k, check_ghost, false);
+        res
+    }
+
+    pub fn get_mut_sample<'a, Q>(
+        &'a mut self,
+        k: &Q,
+        check_ghost: bool,
+        return_distance: bool,
+    ) -> (Option<&'a mut V>, Option<u32>)
+    where
+        KeyRef<K>: Borrow<Q>,
+        Q: Hash + Eq + ?Sized,
+    {
         if let Some(node) = self.map.get_mut(k) {
             let is_ghost = (*node).dropped;
             let node_ptr: *mut IndexedLruEntry<K, V> = &mut **node;
 
             if !check_ghost && is_ghost {
-                None
+                (None, None)
             } else if check_ghost && is_ghost {
                 todo!()
                 // self.ghost_len -= 1;
@@ -384,7 +421,17 @@ impl<K: Hash + Eq, V, S: BuildHasher, A: Clone + Allocator> IndexedLruCache<K, V
                 // None
             } else {
                 // must be real cache
-                let old_index = (*node).index;
+                let mut old_index = (*node).index;
+                let mut distance = 0;
+                if return_distance {
+                    if old_index < self.earlist_index {
+                        old_index = self.earlist_index;
+                    }
+                    distance += self.current_index_count;
+                    for i in old_index..self.global_index {
+                        distance += self.counters.get(&i).unwrap();
+                    }
+                }
                 self.update_counters(&old_index);
                 if old_index != self.global_index {
                     unsafe {
@@ -394,10 +441,13 @@ impl<K: Hash + Eq, V, S: BuildHasher, A: Clone + Allocator> IndexedLruCache<K, V
 
                 self.detach(node_ptr);
                 self.attach(node_ptr);
-                Some(unsafe { &mut (*(*node_ptr).val.as_mut_ptr()) as &mut V })
+                (
+                    Some(unsafe { &mut (*(*node_ptr).val.as_mut_ptr()) as &mut V }),
+                    Some(distance),
+                )
             }
         } else {
-            None
+            (None, None)
         }
     }
 
@@ -624,6 +674,10 @@ impl<K: Hash + Eq, V, S: BuildHasher, A: Clone + Allocator> IndexedLruCache<K, V
 
     pub fn ghost_len(&self) -> usize {
         self.ghost_len
+    }
+
+    pub fn set_accurate_tail(&mut self, accurate_tail: bool) {
+        self.accurate_tail = accurate_tail;
     }
 }
 
