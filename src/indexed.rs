@@ -72,14 +72,14 @@ pub struct IndexedLruCache<K, V, S = DefaultHasher, A: Clone + Allocator = Globa
 
     /// for index
     pub(crate) global_index: u32,
-    pub(crate) earlist_index: u32,
+    pub(crate) earliest_index: u32,
     current_index_count: u32,
     update_interval: u32,
     pub(crate) counters: HashMap<u32, u32>,
 
     /// for index for ghost
     pub(crate) ghost_global_index: u32,
-    pub(crate) ghost_earlist_index: u32,
+    pub(crate) ghost_earliest_index: u32,
     ghost_current_index_count: u32,
     ghost_update_interval: u32,
     pub(crate) ghost_counters: HashMap<u32, u32>,
@@ -96,11 +96,13 @@ impl<K: Hash + Eq, V, S: BuildHasher, A: Clone + Allocator> IndexedLruCache<K, V
         alloc: A,
         ghost_cap: usize,
         update_interval: u32,
+        ghost_bucket_count: usize,
     ) -> Self {
         IndexedLruCache::construct_in(
             cap,
             ghost_cap,
             update_interval,
+            ghost_bucket_count,
             HashMap::with_capacity_and_hasher_in(cap, hash_builder, alloc.clone()),
             alloc,
         )
@@ -111,11 +113,13 @@ impl<K: Hash + Eq, V, S: BuildHasher, A: Clone + Allocator> IndexedLruCache<K, V
         alloc: A,
         ghost_cap: usize,
         update_interval: u32,
+        ghost_bucket_count: usize,
     ) -> Self {
         IndexedLruCache::construct_in(
             usize::MAX,
             ghost_cap,
             update_interval,
+            ghost_bucket_count,
             HashMap::with_hasher_in(hash_builder, alloc.clone()),
             alloc,
         )
@@ -126,6 +130,7 @@ impl<K: Hash + Eq, V, S: BuildHasher, A: Clone + Allocator> IndexedLruCache<K, V
         cap: usize,
         ghost_cap: usize,
         update_interval: u32,
+        ghost_bucket_count: usize,
         map: HashMap<KeyRef<K>, Box<IndexedLruEntry<K, V>, A>, S, A>,
         alloc: A,
     ) -> IndexedLruCache<K, V, S, A> {
@@ -145,16 +150,18 @@ impl<K: Hash + Eq, V, S: BuildHasher, A: Clone + Allocator> IndexedLruCache<K, V
             cur_epoch: 0,
             alloc,
             global_index: 0,
-            earlist_index: 0,
+            earliest_index: 0,
             current_index_count: 0,
             update_interval,
             counters: HashMap::new(),
             ghost_global_index: 0,
-            ghost_earlist_index: 0,
+            ghost_earliest_index: 0,
             ghost_current_index_count: 0,
-            ghost_update_interval: ((min(ghost_cap, usize::MAX - 10) + 10) / 10) as u32,
+            ghost_update_interval: ((min(ghost_cap, usize::MAX - ghost_bucket_count)
+                + ghost_bucket_count)
+                / ghost_bucket_count) as u32,
             ghost_counters: HashMap::new(),
-            accurate_tail: false,
+            accurate_tail: true,
         };
 
         unsafe {
@@ -167,21 +174,32 @@ impl<K: Hash + Eq, V, S: BuildHasher, A: Clone + Allocator> IndexedLruCache<K, V
 }
 
 impl<K: Hash + Eq, V> IndexedLruCache<K, V> {
-    pub fn new(cap: usize, ghost_cap: usize, update_interval: u32) -> IndexedLruCache<K, V> {
+    pub fn new(
+        cap: usize,
+        ghost_cap: usize,
+        update_interval: u32,
+        ghost_bucket_count: usize,
+    ) -> IndexedLruCache<K, V> {
         IndexedLruCache::construct_in(
             cap,
             ghost_cap,
             update_interval,
+            ghost_bucket_count,
             HashMap::with_capacity(cap),
             Global,
         )
     }
 
-    pub fn unbounded(ghost_cap: usize, update_interval: u32) -> IndexedLruCache<K, V> {
+    pub fn unbounded(
+        ghost_cap: usize,
+        update_interval: u32,
+        ghost_bucket_count: usize,
+    ) -> IndexedLruCache<K, V> {
         IndexedLruCache::construct_in(
             usize::MAX,
             ghost_cap,
             update_interval,
+            ghost_bucket_count,
             HashMap::default(),
             Global,
         )
@@ -194,7 +212,7 @@ impl<K: Hash + Eq, V, S: BuildHasher, A: Clone + Allocator> IndexedLruCache<K, V
         if self.current_index_count >= self.update_interval {
             assert_eq!(self.current_index_count, self.update_interval);
             self.counters
-                .insert(self.global_index, self.update_interval);
+                .insert(self.global_index, self.current_index_count);
             self.current_index_count = 0;
             self.global_index += 1;
         }
@@ -207,7 +225,7 @@ impl<K: Hash + Eq, V, S: BuildHasher, A: Clone + Allocator> IndexedLruCache<K, V
         if self.ghost_current_index_count >= self.ghost_update_interval {
             assert_eq!(self.ghost_current_index_count, self.ghost_update_interval);
             self.ghost_counters
-                .insert(self.ghost_global_index, self.ghost_update_interval);
+                .insert(self.ghost_global_index, self.ghost_current_index_count);
             self.ghost_current_index_count = 0;
             self.ghost_global_index += 1;
         }
@@ -215,17 +233,21 @@ impl<K: Hash + Eq, V, S: BuildHasher, A: Clone + Allocator> IndexedLruCache<K, V
         self.ghost_global_index
     }
 
-    fn update_counters(&mut self, old_index: &u32) {
+    fn update_counters(&mut self, old_index: &u32, delete: bool) {
         if *old_index == self.global_index {
-            self.current_index_count -= 1;
+            if delete {
+                self.current_index_count -= 1;
+            }
         } else {
             *self.counters.get_mut(old_index).unwrap() -= 1;
         }
     }
 
-    fn update_ghost_counters(&mut self, old_index: &u32) {
+    fn update_ghost_counters(&mut self, old_index: &u32, delete: bool) {
         if *old_index == self.ghost_global_index {
-            self.ghost_current_index_count -= 1;
+            if delete {
+                self.ghost_current_index_count -= 1;
+            }
         } else {
             *self.ghost_counters.get_mut(old_index).unwrap() -= 1;
         }
@@ -245,7 +267,7 @@ impl<K: Hash + Eq, V, S: BuildHasher, A: Clone + Allocator> IndexedLruCache<K, V
             old_index = (*node).index;
             (*node).index = new_index;
         }
-        self.update_counters(&old_index);
+        self.update_counters(&old_index, true);
 
         // update global
         self.ghost_len += 1;
@@ -276,8 +298,8 @@ impl<K: Hash + Eq, V, S: BuildHasher, A: Clone + Allocator> IndexedLruCache<K, V
                 unsafe {
                     if is_ghost {
                         if is_update && (return_distance || self.accurate_tail) {
-                            if old_index < self.ghost_earlist_index {
-                                old_index = self.ghost_earlist_index;
+                            if old_index < self.ghost_earliest_index {
+                                old_index = self.ghost_earliest_index;
                             }
                             distance += self.len() as u32;
                             distance += self.ghost_current_index_count;
@@ -294,27 +316,27 @@ impl<K: Hash + Eq, V, S: BuildHasher, A: Clone + Allocator> IndexedLruCache<K, V
                             self.ghost_head = (*self.ghost_head).next;
                         }
                         // delete from ghost
-                        self.update_ghost_counters(&old_index);
+                        self.update_ghost_counters(&old_index, true);
                         self.detach(node_ptr);
                         self.attach(node_ptr);
                         // if real is full, shift
-                        if self.len() >= self.cap() {
-                            assert_eq!(self.len(), self.cap());
+                        if self.len() > self.cap() {
                             assert!(self.ghost_len < self.ghost_cap);
                             self.shift_real_tail_to_ghost();
+                            assert_eq!(self.len(), self.cap());
                         }
                     } else {
                         if is_update && return_distance {
-                            if old_index < self.earlist_index {
-                                old_index = self.earlist_index;
+                            if old_index < self.earliest_index {
+                                old_index = self.earliest_index;
                             }
                             distance += self.current_index_count;
                             for i in old_index..self.global_index {
                                 distance += self.counters.get(&i).unwrap();
                             }
                         }
-                        self.update_counters(&old_index);
                         if old_index != self.global_index {
+                            self.update_counters(&old_index, true);
                             (*node_ptr).index = self.get_index();
                         }
                         mem::swap(&mut v, &mut (*(*node_ptr).val.as_mut_ptr()) as &mut V);
@@ -424,16 +446,16 @@ impl<K: Hash + Eq, V, S: BuildHasher, A: Clone + Allocator> IndexedLruCache<K, V
                 let mut old_index = (*node).index;
                 let mut distance = 0;
                 if return_distance {
-                    if old_index < self.earlist_index {
-                        old_index = self.earlist_index;
+                    if old_index < self.earliest_index {
+                        old_index = self.earliest_index;
                     }
                     distance += self.current_index_count;
                     for i in old_index..self.global_index {
                         distance += self.counters.get(&i).unwrap();
                     }
                 }
-                self.update_counters(&old_index);
                 if old_index != self.global_index {
+                    self.update_counters(&old_index, true);
                     unsafe {
                         (*node_ptr).index = self.get_index();
                     }
@@ -475,7 +497,7 @@ impl<K: Hash + Eq, V, S: BuildHasher, A: Clone + Allocator> IndexedLruCache<K, V
                         self.ghost_head = unsafe { (*self.ghost_head).next };
                     }
                     self.detach(tail_node_ptr);
-                    self.update_ghost_counters(&tail_node.index);
+                    self.update_ghost_counters(&tail_node.index, true);
                     let _tail_node = *tail_node;
                 }
             } else {
@@ -484,6 +506,27 @@ impl<K: Hash + Eq, V, S: BuildHasher, A: Clone + Allocator> IndexedLruCache<K, V
         }
 
         self.map.shrink_to_fit();
+    }
+
+    pub fn evict_by_epoch_bucket(&mut self, epoch: Epoch) {
+        self.evict_by_epoch(epoch);
+
+        let real_tail = unsafe { (*self.ghost_head).prev };
+        let real_tail_index = unsafe { (*real_tail).index };
+        for i in self.earliest_index..real_tail_index {
+            self.counters.remove(&i);
+        }
+        self.earliest_index = real_tail_index;
+
+        let ghost_tail = unsafe { (*self.tail).prev };
+        let ghost_tail_index = unsafe { (*ghost_tail).index };
+        for i in self.ghost_earliest_index..ghost_tail_index {
+            self.ghost_counters.remove(&i);
+        }
+        self.ghost_earliest_index = ghost_tail_index;
+
+        self.counters.shrink_to_fit();
+        self.ghost_counters.shrink_to_fit();
     }
 
     fn replace_or_create_node(&mut self, k: K, v: V, index: u32) -> Box<IndexedLruEntry<K, V>, A> {
@@ -502,7 +545,7 @@ impl<K: Hash + Eq, V, S: BuildHasher, A: Clone + Allocator> IndexedLruCache<K, V
                     ptr::drop_in_place(old_node_ghost.key.as_mut_ptr());
                 }
                 let old_index = old_node_ghost.index;
-                self.update_ghost_counters(&old_index);
+                self.update_ghost_counters(&old_index, true);
 
                 old_node_ghost.dropped = false;
                 old_node_ghost.key = mem::MaybeUninit::new(k);
@@ -536,9 +579,10 @@ impl<K: Hash + Eq, V, S: BuildHasher, A: Clone + Allocator> IndexedLruCache<K, V
             let old_index = old_node.index;
             old_node.key = mem::MaybeUninit::new(k);
             old_node.val = mem::MaybeUninit::new(v);
+            old_node.index = index;
 
             let node_ptr: *mut IndexedLruEntry<K, V> = &mut *old_node;
-            self.update_counters(&old_index);
+            self.update_counters(&old_index, true);
             self.detach(node_ptr);
             old_node
         } else {
@@ -628,9 +672,9 @@ impl<K: Hash + Eq, V, S: BuildHasher, A: Clone + Allocator> IndexedLruCache<K, V
                 self.ghost_head = unsafe { (*self.ghost_head).next };
             }
             if old_node.dropped {
-                self.update_ghost_counters(&old_node.index);
+                self.update_ghost_counters(&old_node.index, true);
             } else {
-                self.update_counters(&&old_node.index);
+                self.update_counters(&&old_node.index, true);
             }
             self.detach(node_ptr);
             Some(old_node)
@@ -674,6 +718,14 @@ impl<K: Hash + Eq, V, S: BuildHasher, A: Clone + Allocator> IndexedLruCache<K, V
 
     pub fn ghost_len(&self) -> usize {
         self.ghost_len
+    }
+
+    pub fn bucket_count(&self) -> usize {
+        self.counters.len()
+    }
+
+    pub fn ghost_bucket_count(&self) -> usize {
+        self.ghost_counters.len()
     }
 
     pub fn set_accurate_tail(&mut self, accurate_tail: bool) {

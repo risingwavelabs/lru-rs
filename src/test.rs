@@ -23,7 +23,7 @@ mod indexed_tests {
             }
         }
 
-        let mut cache = IndexedLruCache::new(6, 2, 1);
+        let mut cache = IndexedLruCache::new(6, 2, 1, 10);
 
         cache.put(1, DropCounter::new("a"));
         cache.put(2, DropCounter::new("b"));
@@ -101,7 +101,7 @@ mod indexed_tests {
             }
         }
 
-        let mut cache = IndexedLruCache::new(6, 2, 1);
+        let mut cache = IndexedLruCache::new(6, 2, 1, 10);
 
         cache.put(1, DropCounter::new("a"));
         cache.put(2, DropCounter::new("b"));
@@ -163,6 +163,69 @@ mod indexed_tests {
     }
 
     #[test]
+    fn test_evict_by_epoch_put_mut() {
+        static DROP_COUNT: AtomicUsize = AtomicUsize::new(0);
+        struct DropCounter {
+            string: String,
+        }
+        impl DropCounter {
+            pub fn new(string: &str) -> Self {
+                Self {
+                    string: String::from(string),
+                }
+            }
+        }
+        impl Drop for DropCounter {
+            fn drop(&mut self) {
+                DROP_COUNT.fetch_add(1, Ordering::SeqCst);
+            }
+        }
+
+        let mut cache = IndexedLruCache::new(100, 3, 1, 10);
+
+        cache.put(1, DropCounter::new("a"));
+        cache.put(2, DropCounter::new("b"));
+
+        cache.update_epoch(1);
+        println!("WKXLOG: cache: 1:{:?}", cache);
+
+        cache.put(3, DropCounter::new("c"));
+        cache.put(4, DropCounter::new("d"));
+        cache.put(5, DropCounter::new("e"));
+
+        cache.update_epoch(2);
+
+        cache.put(6, DropCounter::new("f"));
+
+        cache.evict_by_epoch(1);
+        println!("WKXLOG: cache: 2:{:?}", cache);
+
+        assert_eq!(cache.len(), 4);
+        assert_eq!(cache.ghost_len(), 2);
+        cache.put(2, DropCounter::new("b_new"));
+
+        assert_eq!(cache.len(), 5);
+        assert_eq!(cache.ghost_len(), 1);
+        println!("WKXLOG: cache: 3:{:?}", cache);
+
+        assert_eq!(DROP_COUNT.load(Ordering::SeqCst), 2);
+
+        cache.evict_by_epoch(2);
+
+        assert_eq!(DROP_COUNT.load(Ordering::SeqCst), 5);
+        assert_eq!(cache.len(), 2);
+        assert_eq!(cache.ghost_len(), 3);
+
+        let val = cache.peek_mut(&2);
+        assert!(val.is_some());
+        assert_eq!(val.unwrap().string, String::from("b_new"));
+        cache.clear();
+        assert_eq!(cache.len(), 0);
+        assert_eq!(cache.ghost_len(), 0);
+        assert_eq!(DROP_COUNT.load(Ordering::SeqCst), 7);
+    }
+
+    #[test]
     fn test_evict_by_bound_peek_mut() {
         static DROP_COUNT: AtomicUsize = AtomicUsize::new(0);
         struct DropCounter {
@@ -181,7 +244,7 @@ mod indexed_tests {
             }
         }
 
-        let mut cache = IndexedLruCache::new(3, 2, 1);
+        let mut cache = IndexedLruCache::new(3, 2, 1, 10);
 
         cache.put(1, DropCounter::new("a"));
         cache.put(2, DropCounter::new("b"));
@@ -255,7 +318,7 @@ mod indexed_tests {
             }
         }
 
-        let mut cache = IndexedLruCache::new(3, 2, 1);
+        let mut cache = IndexedLruCache::new(3, 2, 1, 10);
 
         cache.put(1, DropCounter::new("a"));
         cache.put(2, DropCounter::new("b"));
@@ -310,6 +373,70 @@ mod indexed_tests {
     }
 
     #[test]
+    fn test_evict_by_bound_put_mut() {
+        static DROP_COUNT: AtomicUsize = AtomicUsize::new(0);
+        struct DropCounter {
+            string: String,
+        }
+        impl DropCounter {
+            pub fn new(string: &str) -> Self {
+                Self {
+                    string: String::from(string),
+                }
+            }
+        }
+        impl Drop for DropCounter {
+            fn drop(&mut self) {
+                DROP_COUNT.fetch_add(1, Ordering::SeqCst);
+            }
+        }
+
+        let mut cache = IndexedLruCache::new(3, 3, 1, 10);
+
+        cache.put(1, DropCounter::new("a"));
+        cache.put(2, DropCounter::new("b"));
+        cache.put(3, DropCounter::new("c"));
+        cache.put(4, DropCounter::new("d"));
+        cache.put(5, DropCounter::new("e"));
+        cache.put(6, DropCounter::new("f"));
+        cache.put(7, DropCounter::new("g"));
+
+        println!("WKXLOG: cache: 1:{:?}", cache);
+        let val = cache.get_mut(&1, false);
+        assert!(val.is_none());
+
+        assert_eq!(cache.len(), 3);
+        assert_eq!(cache.ghost_len(), 3);
+        cache.put(4, DropCounter::new("d_new"));
+        cache.put(5, DropCounter::new("e_new"));
+        assert_eq!(cache.len(), 3);
+        assert_eq!(cache.ghost_len(), 3);
+        let val = cache.get_mut(&6, false);
+        assert!(val.is_none());
+        println!("WKXLOG: cache: 2:{:?}", cache);
+
+        cache.put(2, DropCounter::new("b_new"));
+        let val = cache.get_mut(&3, false);
+        assert!(val.is_none());
+        let val = cache.get_mut(&6, false);
+        assert!(val.is_none());
+        let val = cache.get_mut(&7, false);
+        assert!(val.is_none());
+
+        println!("WKXLOG: cache: 3:{:?}", cache);
+
+        assert_eq!(DROP_COUNT.load(Ordering::SeqCst), 7);
+
+        let val = cache.peek_mut(&2);
+        assert!(val.is_some());
+        assert_eq!(val.unwrap().string, String::from("b_new"));
+
+        cache.clear();
+        assert_eq!(cache.len(), 0);
+        assert_eq!(cache.ghost_len(), 0);
+        assert_eq!(DROP_COUNT.load(Ordering::SeqCst), 10);
+    }
+    #[test]
     fn test_no_memory_leaks_evict_by_epoch() {
         static DROP_COUNT: AtomicUsize = AtomicUsize::new(0);
 
@@ -325,7 +452,7 @@ mod indexed_tests {
 
         for _ in 0..n {
             DROP_COUNT.store(0, Ordering::SeqCst);
-            let mut cache = IndexedLruCache::unbounded(2, 1);
+            let mut cache = IndexedLruCache::unbounded(2, 1, 10);
             for i in 1..n + 1 {
                 cache.update_epoch(i as u64);
                 cache.put(i, DropCounter {});
@@ -353,7 +480,7 @@ mod indexed_tests {
 
         let n = 100;
         for _ in 0..n {
-            let mut cache = IndexedLruCache::unbounded(2, 1);
+            let mut cache = IndexedLruCache::unbounded(2, 1, 10);
             for i in 0..n {
                 cache.put(i, DropCounter {});
             }
