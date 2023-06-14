@@ -5,6 +5,90 @@ mod indexed_tests {
     use crate::IndexedLruCache;
 
     #[test]
+    fn test_pop_lru_by_epoch() {
+        static DROP_COUNT: AtomicUsize = AtomicUsize::new(0);
+        struct DropCounter {
+            string: String,
+        }
+        impl DropCounter {
+            pub fn new(string: &str) -> Self {
+                Self {
+                    string: String::from(string),
+                }
+            }
+        }
+        impl Drop for DropCounter {
+            fn drop(&mut self) {
+                DROP_COUNT.fetch_add(1, Ordering::SeqCst);
+            }
+        }
+
+        let mut cache = IndexedLruCache::new(4, 2, 1, 10);
+        cache.put(1, DropCounter::new("a"));
+        cache.put(2, DropCounter::new("b"));
+
+        cache.update_epoch(1);
+
+        cache.put(3, DropCounter::new("c"));
+        cache.put(4, DropCounter::new("d"));
+
+        {
+            let evicted = cache.pop_lru_by_epoch(1);
+            assert!(evicted.is_some());
+            let evicted_kv = evicted.unwrap();
+            assert!(evicted_kv.0.is_none());
+            assert_eq!(evicted_kv.1.string, String::from("a"));
+        }
+        {
+            let evicted = cache.pop_lru_by_epoch(1);
+            assert!(evicted.is_some());
+            let evicted_kv = evicted.unwrap();
+            assert!(evicted_kv.0.is_none());
+            assert_eq!(evicted_kv.1.string, String::from("b"));
+        }
+        let evicted = cache.pop_lru_by_epoch(1);
+        assert!(evicted.is_none());
+        let evicted = cache.pop_lru_by_epoch(1);
+        assert!(evicted.is_none());
+
+        assert_eq!(cache.len(), 2);
+        assert!(cache.get_mut(&1, false).is_none());
+        assert!(cache.get_mut(&2, false).is_none());
+
+        let val = cache.get_mut(&3, false);
+        assert!(val.is_some());
+        assert_eq!(val.unwrap().string, String::from("c"));
+
+        let val = cache.get_mut(&4, false);
+        assert!(val.is_some());
+        assert_eq!(val.unwrap().string, String::from("d"));
+
+        {
+            let evicted = cache.pop_lru_by_epoch(3);
+            assert!(evicted.is_some());
+            let evicted_kv = evicted.unwrap();
+            assert!(evicted_kv.0.is_some());
+            assert_eq!(evicted_kv.0.unwrap(), 1);
+            assert_eq!(evicted_kv.1.string, String::from("c"));
+        }
+        {
+            let evicted = cache.pop_lru_by_epoch(4);
+            assert!(evicted.is_some());
+            let evicted_kv = evicted.unwrap();
+            assert!(evicted_kv.0.is_some());
+            assert_eq!(evicted_kv.0.unwrap(), 2);
+            assert_eq!(evicted_kv.1.string, String::from("d"));
+        }
+
+        assert_eq!(cache.len(), 0);
+        assert!(cache.get_mut(&3, false).is_none());
+        assert!(cache.get_mut(&4, false).is_none());
+        assert_eq!(DROP_COUNT.load(Ordering::SeqCst), 4);
+        cache.clear();
+        assert_eq!(DROP_COUNT.load(Ordering::SeqCst), 4);
+    }
+
+    #[test]
     fn test_evict_by_epoch_peek_mut() {
         static DROP_COUNT: AtomicUsize = AtomicUsize::new(0);
         struct DropCounter {
