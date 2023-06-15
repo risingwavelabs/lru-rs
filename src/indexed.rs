@@ -276,8 +276,9 @@ impl<K: Hash + Eq, V, S: BuildHasher, A: Clone + Allocator> IndexedLruCache<K, V
 }
 
 impl<K: Hash + Eq, V, S: BuildHasher, A: Clone + Allocator> IndexedLruCache<K, V, S, A> {
-    pub fn put(&mut self, k: K, v: V) {
-        let _dis = self.put_sample(k, v, false, false);
+    pub fn put(&mut self, k: K, v: V) -> Option<V> {
+        let (v, _sample_data) = self.put_sample(k, v, false, false);
+        v
     }
 
     pub fn put_sample(
@@ -286,7 +287,7 @@ impl<K: Hash + Eq, V, S: BuildHasher, A: Clone + Allocator> IndexedLruCache<K, V
         mut v: V,
         is_update: bool,
         return_distance: bool,
-    ) -> Option<(u32, bool)> {
+    ) -> (Option<V>, Option<(u32, bool)>) {
         let node_ref = self.map.get_mut(&KeyRef { k: &k });
 
         match node_ref {
@@ -325,6 +326,7 @@ impl<K: Hash + Eq, V, S: BuildHasher, A: Clone + Allocator> IndexedLruCache<K, V
                             self.shift_real_tail_to_ghost();
                             assert_eq!(self.len(), self.cap());
                         }
+                        (None, Some((distance, is_ghost)))
                     } else {
                         if is_update && return_distance {
                             if old_index < self.earliest_index {
@@ -342,14 +344,14 @@ impl<K: Hash + Eq, V, S: BuildHasher, A: Clone + Allocator> IndexedLruCache<K, V
                         mem::swap(&mut v, &mut (*(*node_ptr).val.as_mut_ptr()) as &mut V);
                         self.detach(node_ptr);
                         self.attach(node_ptr);
+                        (Some(v), Some((distance, is_ghost)))
                     }
                 }
-                Some((distance, is_ghost))
             }
             None => {
                 // if the capacity is zero, do nothing
                 if self.cap() == 0 {
-                    return None;
+                    return (None, None);
                 }
                 let index = self.get_index();
                 let mut node = self.replace_or_create_node(k, v, index);
@@ -359,7 +361,7 @@ impl<K: Hash + Eq, V, S: BuildHasher, A: Clone + Allocator> IndexedLruCache<K, V
 
                 let keyref = unsafe { (*node_ptr).key.as_ptr() };
                 self.map.insert(KeyRef { k: keyref }, node);
-                None
+                (None, None)
             }
         }
     }
@@ -666,8 +668,6 @@ impl<K: Hash + Eq, V, S: BuildHasher, A: Clone + Allocator> IndexedLruCache<K, V
         }
     }
 
-
-
     pub fn is_real_empty(&self) -> bool {
         self.len() == 0
     }
@@ -680,7 +680,7 @@ impl<K: Hash + Eq, V, S: BuildHasher, A: Clone + Allocator> IndexedLruCache<K, V
     pub fn current_epoch(&self) -> Epoch {
         self.cur_epoch
     }
-    
+
     pub fn pop_lru(&mut self) -> Option<K> {
         let node = self.remove_last()?;
         // N.B.: Can't destructure directly because of https://github.com/rust-lang/rust/issues/28536

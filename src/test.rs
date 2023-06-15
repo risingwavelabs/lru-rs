@@ -270,6 +270,12 @@ mod indexed_tests {
         cache.put(1, DropCounter::new("a"));
         cache.put(2, DropCounter::new("b"));
 
+        {
+            let replace = cache.put(2, DropCounter::new("b_new"));
+            assert!(replace.is_some());
+            assert_eq!(replace.unwrap().string, String::from("b"));
+        }
+
         cache.update_epoch(1);
         println!("WKXLOG: cache: 1:{:?}", cache);
 
@@ -286,27 +292,30 @@ mod indexed_tests {
 
         assert_eq!(cache.len(), 4);
         assert_eq!(cache.ghost_len(), 2);
-        cache.put(2, DropCounter::new("b_new"));
+        {
+            let replace = cache.put(2, DropCounter::new("b_new_2"));
+            assert!(replace.is_none());
+        }
 
         assert_eq!(cache.len(), 5);
         assert_eq!(cache.ghost_len(), 1);
         println!("WKXLOG: cache: 3:{:?}", cache);
 
-        assert_eq!(DROP_COUNT.load(Ordering::SeqCst), 2);
+        assert_eq!(DROP_COUNT.load(Ordering::SeqCst), 3);
 
         cache.evict_by_epoch(2);
 
-        assert_eq!(DROP_COUNT.load(Ordering::SeqCst), 5);
+        assert_eq!(DROP_COUNT.load(Ordering::SeqCst), 6);
         assert_eq!(cache.len(), 2);
         assert_eq!(cache.ghost_len(), 3);
 
         let val = cache.peek_mut(&2);
         assert!(val.is_some());
-        assert_eq!(val.unwrap().string, String::from("b_new"));
+        assert_eq!(val.unwrap().string, String::from("b_new_2"));
         cache.clear();
         assert_eq!(cache.len(), 0);
         assert_eq!(cache.ghost_len(), 0);
-        assert_eq!(DROP_COUNT.load(Ordering::SeqCst), 7);
+        assert_eq!(DROP_COUNT.load(Ordering::SeqCst), 8);
     }
 
     #[test]
@@ -404,12 +413,18 @@ mod indexed_tests {
 
         let mut cache = IndexedLruCache::new(3, 2, 1, 10);
 
-        cache.put(1, DropCounter::new("a"));
+        {
+            let replace = cache.put(1, DropCounter::new("a"));
+            assert!(replace.is_none());
+        }
         cache.put(2, DropCounter::new("b"));
         cache.put(3, DropCounter::new("c"));
         cache.put(4, DropCounter::new("d"));
         cache.put(5, DropCounter::new("e"));
-        cache.put(6, DropCounter::new("f"));
+        {
+            let replace = cache.put(6, DropCounter::new("f"));
+            assert!(replace.is_none());
+        }
 
         println!("WKXLOG: cache: 2:{:?}", cache);
 
