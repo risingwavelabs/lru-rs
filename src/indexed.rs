@@ -502,48 +502,56 @@ impl<K: Hash + Eq, V, S: BuildHasher, A: Clone + Allocator> IndexedLruCache<K, V
         }
         let node_epoch = unsafe { (*node).epoch };
         if node_epoch < epoch {
-            // drop value
-            let new_index = self.get_ghost_index();
-            let old_index;
-            // make ghost
-
-            let mut value_to_replace: mem::MaybeUninit<V>;
-            unsafe {
-                assert!(!(*node).dropped);
-                value_to_replace = mem::MaybeUninit::uninit();
-                mem::swap(
-                    &mut (*(*node).val.as_mut_ptr()) as &mut V,
-                    &mut (*value_to_replace.as_mut_ptr()) as &mut V,
-                );
-                (*node).dropped = true;
-                old_index = (*node).index;
-                (*node).index = new_index;
-            }
-            self.update_counters(&old_index, true);
-
-            // update global
-            self.ghost_len += 1;
-            self.ghost_head = unsafe { (*self.ghost_head).prev };
-
-            if self.ghost_len > self.ghost_cap {
-                let tail = unsafe { (*self.tail).prev };
-                let tail_key = KeyRef {
-                    k: unsafe { &(*(*tail).key.as_ptr()) },
-                };
-                let mut tail_node = self.map.remove(&tail_key).unwrap();
-                let tail_node_ptr: *mut IndexedLruEntry<K, V> = &mut *tail_node;
-                if tail_node_ptr == self.ghost_head {
-                    self.ghost_head = unsafe { (*self.ghost_head).next };
-                }
-                self.detach(tail_node_ptr);
-                self.update_ghost_counters(&tail_node.index, true);
-                let IndexedLruEntry { key, .. } = *tail_node;
-                unsafe { Some((Some(key.assume_init()), value_to_replace.assume_init())) }
-            } else {
-                unsafe { Some((None, value_to_replace.assume_init())) }
-            }
+            return self.pop_lru_once();
         } else {
             None
+        }
+    }
+
+    pub fn pop_lru_once(&mut self) -> Option<(Option<K>, V)> {
+        let node = unsafe { (*self.ghost_head).prev };
+        if node == self.head {
+            return None;
+        }
+        // drop value
+        let new_index = self.get_ghost_index();
+        let old_index;
+        // make ghost
+
+        let mut value_to_replace: mem::MaybeUninit<V>;
+        unsafe {
+            assert!(!(*node).dropped);
+            value_to_replace = mem::MaybeUninit::uninit();
+            mem::swap(
+                &mut (*(*node).val.as_mut_ptr()) as &mut V,
+                &mut (*value_to_replace.as_mut_ptr()) as &mut V,
+            );
+            (*node).dropped = true;
+            old_index = (*node).index;
+            (*node).index = new_index;
+        }
+        self.update_counters(&old_index, true);
+
+        // update global
+        self.ghost_len += 1;
+        self.ghost_head = unsafe { (*self.ghost_head).prev };
+
+        if self.ghost_len > self.ghost_cap {
+            let tail = unsafe { (*self.tail).prev };
+            let tail_key = KeyRef {
+                k: unsafe { &(*(*tail).key.as_ptr()) },
+            };
+            let mut tail_node = self.map.remove(&tail_key).unwrap();
+            let tail_node_ptr: *mut IndexedLruEntry<K, V> = &mut *tail_node;
+            if tail_node_ptr == self.ghost_head {
+                self.ghost_head = unsafe { (*self.ghost_head).next };
+            }
+            self.detach(tail_node_ptr);
+            self.update_ghost_counters(&tail_node.index, true);
+            let IndexedLruEntry { key, .. } = *tail_node;
+            unsafe { Some((Some(key.assume_init()), value_to_replace.assume_init())) }
+        } else {
+            unsafe { Some((None, value_to_replace.assume_init())) }
         }
     }
 
