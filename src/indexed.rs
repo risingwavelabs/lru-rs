@@ -320,7 +320,7 @@ impl<K: Hash + Eq, V, S: BuildHasher, A: Clone + Allocator> IndexedLruCache<K, V
                         self.update_ghost_counters(&old_index, true);
                         self.detach(node_ptr);
                         self.attach(node_ptr);
-                        // if real is full, shift
+                        // if real is full, shift, as we set cap to unlimited, it will never reach here.
                         if self.len() > self.cap() {
                             assert!(self.ghost_len < self.ghost_cap);
                             self.shift_real_tail_to_ghost();
