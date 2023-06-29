@@ -590,9 +590,7 @@ impl<K: Hash + Eq, V, S: BuildHasher, A: Clone + Allocator> IndexedLruCache<K, V
         self.map.shrink_to_fit();
     }
 
-    pub fn evict_by_epoch_bucket(&mut self, epoch: Epoch) {
-        self.evict_by_epoch(epoch);
-
+    pub fn adjust_counters(&mut self) {
         let real_tail = unsafe { (*self.ghost_head).prev };
         let real_tail_index = unsafe { (*real_tail).index };
         for i in self.earliest_index..real_tail_index {
