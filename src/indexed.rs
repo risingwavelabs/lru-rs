@@ -173,6 +173,24 @@ impl<K: Hash + Eq, V, S: BuildHasher, A: Clone + Allocator> IndexedLruCache<K, V
     }
 }
 
+impl<K: Hash + Eq, V, S: BuildHasher> IndexedLruCache<K, V, S> {
+    pub fn unbounded_with_hasher(
+        hash_builder: S,
+        ghost_cap: usize,
+        update_interval: u32,
+        ghost_bucket_count: usize,
+    ) -> IndexedLruCache<K, V, S> {
+        IndexedLruCache::construct_in(
+            usize::MAX,
+            ghost_cap,
+            update_interval,
+            ghost_bucket_count,
+            HashMap::with_hasher(hash_builder),
+            Global,
+        )
+    }
+}
+
 impl<K: Hash + Eq, V> IndexedLruCache<K, V> {
     pub fn new(
         cap: usize,
