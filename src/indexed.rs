@@ -440,6 +440,53 @@ impl<K: Hash + Eq, V, S: BuildHasher, A: Clone + Allocator> IndexedLruCache<K, V
         }
     }
 
+    pub fn contains_sampled<Q>(&mut self, k: &Q, return_distance: bool) -> (bool, Option<(u32, bool)>)
+    where
+        KeyRef<K>: Borrow<Q>,
+        Q: Hash + Eq + ?Sized,
+    {
+        if let Some(node_ref) = self.map.get_mut(k) {
+            let mut distance = 0;
+            let mut old_index = node_ref.index;
+            let is_ghost = node_ref.dropped;
+            let node_ptr: *mut IndexedLruEntry<K, V> = &mut **node_ref;
+            unsafe {
+                if is_ghost {
+                    if return_distance || self.accurate_tail {
+                        if old_index < self.ghost_earliest_index {
+                            old_index = self.ghost_earliest_index;
+                        }
+                        distance += self.len() as u32;
+                        distance += self.ghost_current_index_count;
+                        for i in old_index..self.ghost_global_index {
+                            distance += self.ghost_counters.get(&i).unwrap();
+                        }
+                    }
+                    (false, Some((distance, is_ghost)))
+                } else {
+                    if return_distance {
+                        if old_index < self.earliest_index {
+                            old_index = self.earliest_index;
+                        }
+                        distance += self.current_index_count;
+                        for i in old_index..self.global_index {
+                            distance += self.counters.get(&i).unwrap();
+                        }
+                    }
+                    if old_index != self.global_index {
+                        self.update_counters(&old_index, true);
+                        (*node_ptr).index = self.get_index();
+                    }
+                    self.detach(node_ptr);
+                    self.attach(node_ptr);
+                    (true, Some((distance, is_ghost)))
+                }
+            }
+        } else {
+            (false, None)
+        }
+    }
+
     /// Moves the key to the head of the LRU list if it exists.
     /// if in real cache, return v and index, move it.
     /// if in ghost cache && check_ghost, return none and index.
