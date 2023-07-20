@@ -440,7 +440,11 @@ impl<K: Hash + Eq, V, S: BuildHasher, A: Clone + Allocator> IndexedLruCache<K, V
         }
     }
 
-    pub fn contains_sampled<Q>(&mut self, k: &Q, return_distance: bool) -> (bool, Option<(u32, bool)>)
+    pub fn contains_sampled<Q>(
+        &mut self,
+        k: &Q,
+        return_distance: bool,
+    ) -> (bool, Option<(u32, bool)>)
     where
         KeyRef<K>: Borrow<Q>,
         Q: Hash + Eq + ?Sized,
@@ -823,6 +827,22 @@ impl<K: Hash + Eq, V, S: BuildHasher, A: Clone + Allocator> IndexedLruCache<K, V
             None
         }
     }
+
+    pub fn pop_ghost_once(&mut self) -> K {
+        let prev;
+        unsafe { prev = (*self.tail).prev }
+        assert!(prev != self.head);
+        let old_key = KeyRef {
+            k: unsafe { &(*(*(*self.tail).prev).key.as_ptr()) },
+        };
+        let mut old_node = self.map.remove(&old_key).unwrap();
+        let node_ptr: *mut IndexedLruEntry<K, V> = &mut *old_node;
+        assert!(old_node.dropped);
+        self.update_ghost_counters(&old_node.index, true);
+        self.detach(node_ptr);
+        let IndexedLruEntry { key, .. } = *old_node;
+        unsafe { key.assume_init() }
+    }
 }
 
 impl<K: Hash + Eq, V, S: BuildHasher, A: Clone + Allocator> IndexedLruCache<K, V, S, A> {
@@ -855,6 +875,10 @@ impl<K: Hash + Eq, V, S: BuildHasher, A: Clone + Allocator> IndexedLruCache<K, V
 
     pub fn ghost_cap(&self) -> usize {
         self.ghost_cap
+    }
+
+    pub fn set_ghost_cap(&mut self, ghost_cap: usize) {
+        self.ghost_cap = ghost_cap;
     }
 
     pub fn ghost_len(&self) -> usize {
