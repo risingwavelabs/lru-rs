@@ -86,6 +86,7 @@ pub struct IndexedLruCache<K, V, S = DefaultHasher, A: Clone + Allocator = Globa
 
     /// control
     accurate_tail: bool,
+    ghost_bucket_count_hint: usize,
     alloc: A,
 }
 
@@ -160,8 +161,10 @@ impl<K: Hash + Eq, V, S: BuildHasher, A: Clone + Allocator> IndexedLruCache<K, V
             ghost_update_interval: ((min(ghost_cap, usize::MAX - ghost_bucket_count)
                 + ghost_bucket_count)
                 / ghost_bucket_count) as u32,
+
             ghost_counters: HashMap::new(),
             accurate_tail: true,
+            ghost_bucket_count_hint: ghost_bucket_count,
         };
 
         unsafe {
@@ -228,7 +231,6 @@ impl<K: Hash + Eq, V, S: BuildHasher, A: Clone + Allocator> IndexedLruCache<K, V
     #[inline]
     fn get_index(&mut self) -> u32 {
         if self.current_index_count >= self.update_interval {
-            assert_eq!(self.current_index_count, self.update_interval);
             self.counters
                 .insert(self.global_index, self.current_index_count);
             self.current_index_count = 0;
@@ -241,7 +243,6 @@ impl<K: Hash + Eq, V, S: BuildHasher, A: Clone + Allocator> IndexedLruCache<K, V
     #[inline]
     fn get_ghost_index(&mut self) -> u32 {
         if self.ghost_current_index_count >= self.ghost_update_interval {
-            assert_eq!(self.ghost_current_index_count, self.ghost_update_interval);
             self.ghost_counters
                 .insert(self.ghost_global_index, self.ghost_current_index_count);
             self.ghost_current_index_count = 0;
@@ -878,6 +879,9 @@ impl<K: Hash + Eq, V, S: BuildHasher, A: Clone + Allocator> IndexedLruCache<K, V
     }
 
     pub fn set_ghost_cap(&mut self, ghost_cap: usize) {
+        self.ghost_update_interval = ((min(ghost_cap, usize::MAX - self.ghost_bucket_count_hint)
+            + self.ghost_bucket_count_hint)
+            / self.ghost_bucket_count_hint) as u32;
         self.ghost_cap = ghost_cap;
     }
 

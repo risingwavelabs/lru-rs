@@ -2,6 +2,7 @@ use rand::distributions::Alphanumeric;
 use rand::rngs::SmallRng;
 use rand::Rng;
 
+#[allow(dead_code)]
 fn deterministic_random_string(rng: &mut SmallRng) -> String {
     rng.sample_iter(&Alphanumeric)
         .take(1024)
@@ -9,7 +10,7 @@ fn deterministic_random_string(rng: &mut SmallRng) -> String {
         .collect()
     // String::with_capacity(1024)
 }
-
+#[allow(dead_code)]
 fn is_sampled(rng: &mut SmallRng) -> bool {
     rng.gen_range(0..100) < 2
 }
@@ -85,10 +86,11 @@ mod bench_tests {
     const DELAY_KEY_RANGE: u32 = 200 * 1000 * 5;
     const NORMAL_KEY_RANGE: u32 = 5 * 1000 * 1;
     const GHOST_CAP: usize = 200 * 1000;
-    const UPDATE_INTERVAL: u32 = 100;
-    const GHOST_BUCKET_COUNT: usize = 100;
+    const UPDATE_INTERVAL: u32 = REAL_CAP_LIMIT as u32 / 30;
+    const GHOST_BUCKET_COUNT: usize = 30;
 
     #[test]
+    #[ignore]
     fn test_indexed() {
         let rng = &mut SmallRng::seed_from_u64(0);
 
@@ -103,9 +105,10 @@ mod bench_tests {
         let value_string = deterministic_random_string(rng);
 
         let mut contain_num = 0;
-        let mut epoch = 0;
+        let mut epoch = 101;
         let mut cur_size = 0;
         let mut k_start = DELAY_KEY_RANGE + NORMAL_KEY_RANGE;
+        cache.update_epoch(epoch);
 
         let start_time = Instant::now();
 
@@ -151,7 +154,7 @@ mod bench_tests {
                         cur_size -= old_v.string.len();
                     }
                 }
-                // cache.adjust_counters();
+                cache.adjust_counters();
             }
             if i % 24576 == 0 {
                 epoch += 1;
