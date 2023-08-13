@@ -73,6 +73,7 @@ use std::iter::FusedIterator;
 use std::marker::PhantomData;
 use std::mem;
 use std::ptr;
+extern crate rand;
 
 use hashbrown::HashMap;
 
@@ -80,7 +81,9 @@ extern crate alloc;
 
 type Epoch = u64;
 
+pub mod bench;
 pub mod indexed;
+pub use bench::*;
 pub use indexed::*;
 pub mod test;
 
