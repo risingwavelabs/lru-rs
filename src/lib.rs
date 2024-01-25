@@ -57,7 +57,6 @@
 //! ```
 
 #![feature(allocator_api)]
-#![feature(vec_into_raw_parts)]
 
 extern crate hashbrown;
 
