@@ -63,3 +63,22 @@ impl<'cache, 'brand, K: Hash + Eq, V, S: BuildHasher, A: Clone + Allocator>
         unsafe { std::mem::transmute(self.cache.get(k)) }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use crate::LruCache;
+
+    #[test]
+    fn test_scope_for_multi_get() {
+        let mut cache = LruCache::unbounded();
+        assert_eq!(cache.put("apple", "red".to_string()), None);
+        assert_eq!(cache.put("banana", "yellow".to_string()), None);
+        let joined = cache.scope_for_multi_get(|mut scope, token| {
+            let apple: &str = scope.get(&token, "apple").unwrap().as_str();
+            let banana: &str = scope.get(&token, "banana").unwrap().as_str();
+            [apple, banana].join(" ")
+        });
+
+        assert_eq!(joined, "red yellow");
+    }
+}
