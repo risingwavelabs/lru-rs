@@ -76,6 +76,9 @@ use std::ptr;
 
 use hashbrown::HashMap;
 
+mod scope;
+pub use scope::{GetScope, GetToken};
+
 extern crate alloc;
 
 type Epoch = u64;
