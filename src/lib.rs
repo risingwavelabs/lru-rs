@@ -838,7 +838,7 @@ impl<K: Hash + Eq, V, S: BuildHasher, A: Clone + Allocator> LruCache<K, V, S, A>
     }
 
     /// Update the current epoch. The given epoch should be greater than the current epoch.
-    pub fn pop_lru_by_epoch(&mut self, epoch: Epoch) -> Option<(K, V)> {
+    pub fn pop_lru_by_epoch(&mut self, epoch: Epoch) -> Option<(K, V, Epoch)> {
         let node = unsafe { (*self.tail).prev };
         let node_epoch = unsafe { (*node).epoch };
         if node_epoch < epoch {
@@ -850,7 +850,7 @@ impl<K: Hash + Eq, V, S: BuildHasher, A: Clone + Allocator> LruCache<K, V, S, A>
                 let node_ptr: *mut LruEntry<K, V> = &mut *old_node;
                 self.detach(node_ptr);
                 let LruEntry { key, val, .. } = *old_node;
-                unsafe { Some((key.assume_init(), val.assume_init())) }
+                unsafe { Some((key.assume_init(), val.assume_init(), node_epoch)) }
             } else {
                 None
             }
@@ -1629,8 +1629,8 @@ mod tests {
         cache.put(3, "c");
         cache.put(4, "d");
 
-        assert_eq!(cache.pop_lru_by_epoch(1), Some((1, "a")));
-        assert_eq!(cache.pop_lru_by_epoch(1), Some((2, "b")));
+        assert_eq!(cache.pop_lru_by_epoch(1), Some((1, "a", 0)));
+        assert_eq!(cache.pop_lru_by_epoch(1), Some((2, "b", 0)));
         assert_eq!(cache.pop_lru_by_epoch(1), None);
         assert_eq!(cache.pop_lru_by_epoch(1), None);
 
@@ -1640,8 +1640,8 @@ mod tests {
         assert_eq!(cache.get(&3), Some(&"c"));
         assert_eq!(cache.get(&4), Some(&"d"));
 
-        assert_eq!(cache.pop_lru_by_epoch(2), Some((3, "c")));
-        assert_eq!(cache.pop_lru_by_epoch(2), Some((4, "d")));
+        assert_eq!(cache.pop_lru_by_epoch(2), Some((3, "c", 1)));
+        assert_eq!(cache.pop_lru_by_epoch(2), Some((4, "d", 1)));
 
         assert_eq!(cache.len(), 0);
         assert!(cache.get(&3).is_none());
