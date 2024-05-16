@@ -451,6 +451,26 @@ impl<K: Hash + Eq, V, S: BuildHasher, A: Clone + Allocator> LruCache<K, V, S, A>
         }
     }
 
+    pub fn get_many<'a, 'b, Q>(&mut self, ks: impl Iterator<Item = &'b Q>) -> Vec<Option<&'a V>>
+    where
+        K: Borrow<Q>,
+        Q: Hash + Eq + ?Sized + 'b,
+    {
+        ks.map(|k| {
+            if let Some(node) = self.map.get_mut(KeyWrapper::from_ref(k)) {
+                let node_ptr: *mut LruEntry<K, V> = &mut **node;
+
+                self.detach(node_ptr);
+                self.attach(node_ptr);
+                // SAFETY: Both `attach` and `dettach` will not modify the val field.
+                Some(unsafe { &(*(*node_ptr).val.as_ptr()) as &V })
+            } else {
+                None
+            }
+        })
+        .collect()
+    }
+
     /// Returns a mutable reference to the value of the key in the cache or `None` if it
     /// is not present in the cache. Moves the key to the head of the LRU list if it exists.
     ///
@@ -1930,6 +1950,17 @@ mod tests {
         cache.put(key, "red");
 
         assert_opt_eq(cache.get("apple"), "red");
+    }
+
+    #[test]
+    fn test_get_many() {
+        let mut cache = LruCache::new(2);
+
+        cache.put("apple", "red");
+        cache.put("pear", "yellow");
+
+        let res = cache.get_many(["pear", "watermelon", "apple"].iter());
+        assert_eq!(res, vec![Some(&"yellow"), None, Some(&"red")]);
     }
 
     #[test]
